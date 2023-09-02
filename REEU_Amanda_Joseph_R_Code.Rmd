@@ -1,0 +1,475 @@
+---
+title: "Amanda & Joseph's graphs/code"
+output: htdata_notebook
+---
+
+#Set-Up
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(tidyverse)
+library(stringr)
+
+all_data <- read.csv("all_merged_sum_V2.csv")
+growthmerged <- read.csv("allyears_growthratedata.csv")
+```
+
+# Density Plot
+```{r}
+sa_l4_density <- ggplot(data = subset(all_data,                               # Make only 2023 Summer B73, M162W, and Cdata333 data show
+                                      all_data$Genotype_ID != "Cdata322" & 
+                                        all_data$Year == "2023" & 
+                                        all_data$Season == "SUMMER"),
+              aes(as.numeric(Surface_Area_L4))) +              # Surface area leaf 4 is the x axis
+  geom_density(aes(fill=factor(Treatment_ID)), alpha = 0.5) +  # Create the density plot, with 0.5 transparency, 3 hills that are differeniated by                                                                     treatment which are indicated by color
+  labs( 
+    x = expression("Surface Area Leaf 4 " ~ mm^2),
+    y = "Density",
+    fill = "Treatment") +
+  facet_wrap(~Genotype_ID, nrow=3) +
+  scale_fill_manual(values = c("#6096B4", "#7bb38d", "#874C62"), # Create colors for each treatment
+                    labels = c("Control", "Drought", "Shade")) +
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.0001)) + # Convert exponent to decimal
+  theme_bw()
+
+plot(sa_l4_density)
+```
+
+# Regression
+```{r}
+sa_l4_x_primary <- ggplot(data = subset(all_data,                                # Make only 2023 Summer B73, M162W, and Cdata333 data show
+                                        all_data$Genotype_ID != "Cdata322" & 
+                                          all_data$Year == "2023" & 
+                                          all_data$Season == "SUMMER"), 
+             aes(x = as.numeric(Surface_Area_L4),                                 # Surface Area Leaf 4 is x axis,
+                 y = as.numeric(Total.Root.Length.mm_P),                          # Primary root length is y axis
+                 color = Treatment_ID)) +                                         # Each dot is colored by treatment
+  geom_point() +                                                                  # Make scatterplot
+  geom_smooth(method = 'lm', se = FALSE) +                                        # Create regression line
+  facet_wrap(~Genotype_ID) +                                                      # Create 3 graphs by genotype
+  scale_color_manual(values = c("#00AFBB", "#E7B800", "#FC4E07"),                 # Set each color of the treatment
+                     labels = c("Control", "Drought", "Shade")) +
+  theme_bw() +
+  labs(x = "", y = "Primary Root Length mm", color = "Treatment") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+# same comments for the other graphs except the type of root used is different for the y axis
+
+sa_l4_x_seminal <- ggplot(data = subset(all_data, 
+                                        all_data$Genotype_ID != "Cdata322" & 
+                                          all_data$Year == "2023" & 
+                                          all_data$Season == "SUMMER"), 
+             aes(x = as.numeric(Surface_Area_L4), 
+                 y = as.numeric(Total.Root.Length.mm_S),
+                 color = Treatment_ID)) +
+  geom_point() +
+  geom_smooth(method = 'lm', se = FALSE) +
+  facet_wrap(~Genotype_ID) +
+  scale_color_manual(values = c("#00AFBB", "#E7B800", "#FC4E07"),
+                     labels = c("Control", "Drought", "Shade")) +
+  theme_bw() +
+  labs(x = "", y = "Seminal Root Length mm", color = "Treatment") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+sa_l4_x_crown <- ggplot(data = subset(all_data, 
+                                      all_data$Genotype_ID != "Cdata322" & 
+                                        all_data$Year == "2023" & all_data$Season == "SUMMER" ), 
+             aes(x = as.numeric(Surface_Area_L4), 
+                 y = as.numeric(Total.Root.Length.mm_C), 
+                 color = Treatment_ID)) +
+  geom_point() +
+  geom_smooth(method = 'lm', se = FALSE) +
+  facet_wrap(~Genotype_ID) +
+  scale_color_manual(values = c("#00AFBB", "#E7B800", "#FC4E07"),
+                     labels = c("Control", "Drought", "Shade")) +
+  theme_bw() +
+  labs(x = expression("Surface Area Leaf 4 " ~ mm^2), 
+       y = "Crown Root Length mm", 
+       color = "Treatment")
+
+sa_l4_x_allroottypes_regression <- ggarrange(sa_l4_x_primary,sa_l4_x_seminal,sa_l4_x_crown,common.legend = TRUE,nrow=3) # merge all the graphs into one
+
+plot(sa_l4_x_allroottypes_regression)
+```
+
+# Growth 
+```{r}
+# Set-Up
+library(dplyr)
+library(tidyr)
+library(broom)
+library(nlstools)
+library(utils)
+library(car)
+library(tidyverse)
+library(minpack.lm)
+library(nlraa)
+
+## Note: plants need to be examiend by genotype, season, and treatment since there may be differences and thus different values overall 
+# for the linear plateau
+
+growth<- read.csv("allyears_growthratedata.csv") #load in daily growth data
+
+
+growth$Length_of_Leaf_4_mm<-as.numeric(growth$Length_of_Leaf_4_mm)
+
+#only keep values that are real growth values
+growth<-growth %>%
+  filter(Length_of_Leaf_4_mm>0)%>%
+  na.omit(Length_of_Leaf_4_mm)
+
+# create a column of the duration the plant was growing/ day measurements taken
+growth<-growth%>%
+  group_by(Plant_ID,Season,Year)%>%
+  mutate(Day_no=row_number())
+
+# check to ensure uniqueness of the different ID's
+unique(growth$Genotype_ID)
+unique(growth$Season)
+unique(growth$Treatment)
+
+# All unique ID's
+# [1] Cdata52   B73     Cdata322  Mo18w   Ki11   
+# [6] B97     Cdata69   OH7b    NC350   Cdata 277
+# [11] Cdata247  Cdata103  HP301   Tx303   Ky21   
+# [16] M37w    Ms71    Cdata228  Tzi8    NC358  
+# [21] Oh43    M162W   Cdata333 
+
+# gets the subgrowth that matches the linear plateu so can find the slope/ other measurements
+subgrowth<-subset(growth,Genotype_ID=="B73"&Year=="2023"&Treatment=="Control"&Season=="SPRING"&Plant_ID!="2"&Plant_ID!="8"&Plant_ID!="10"&Plant_ID!="16"&Plant_ID!="3"&Plant_ID!="12"&Plant_ID!="15"&Plant_ID!="4"&Plant_ID!="6"&Plant_ID!="1")
+
+# check to make sure subgrowth represents similar linear plateau compared to others; otherwise take out Plant_ID
+ggplot(subgrowth, aes(Day_no, Length_of_Leaf_4_mm, colour=Genotype_ID, group=Genotype_ID))+
+  geom_point()+
+  geom_smooth()+
+  theme_minimal()+
+  #scale_x_discrete(breaks=seq(0,10,by=2))+ #set the day number tick parks
+  facet_wrap(~Genotype_ID*Season*Year*Treatment, nrow=3)+
+  ylab("Length, mm")+
+  xlab("Day of Growth")+
+  ggtitle("L4 Length of Diverse Maize Inbreds")+
+  facet_wrap(~Plant_ID)
+
+# find the linear model of the data; then take out the appropriate variables
+fit.lm    = lm(Length_of_Leaf_4_mm ~ Day_no, data=subgrowth)
+summary(fit.lm)
+# y intercept
+yint.ini     = fit.lm$coefficients[1]
+# slope before plateu 
+m.ini     = fit.lm$coefficients[2]
+# mean of the duration of plant growth
+jp.ini   = mean(subgrowth$Day_no)
+
+# function to calculate variables of linear plateau
+linear.plateau<-function(x, yint, m, jp){
+  ifelse(x < jp,yint + m * x,yint + m * jp)
+}
+
+maxiter <- 1000
+control = list(maxiter = maxiter)
+nls.lm.control(maxiter = maxiter)
+
+# loops through all the plants in the year, season and treatment and calcualtes based on the values calculated earlier per plant
+growthtidy<-subgrowth%>% group_by(Genotype_ID, Plant_ID, Year, Season, Treatment) %>%
+  do(fitHM= tidy(nlsLM(Length_of_Leaf_4_mm~linear.plateau(yint,m,jp,x=Day_no),
+                 data = .,
+                 control = list(maxiter = maxiter),
+                 start=list(yint=yint.ini,m=m.ini,jp=jp.ini))))%>% 
+  unnest(fitHM)
+head(growthtidy)
+
+write_csv(growthtidyB732021,"test.csv") # write data to csv file 
+
+# merges all csv files into one csv/ dataframe
+growthtidymerged<-rbind(Tx303_Summergrowth, Tzi8_Summergrowth,Oh43_Fallgrowth, OH7b_Summergrowth, NC358_Summergrowth, NC350_Summergrowth, Ms71_Summergrowth, MO18W_Summergrowth, 
+                        M162W_SummerShadegrowth,M162W_SummerDroughtgrowth, M162W_SummerControlgrowth, M37W_Summergrowth, Ky21_Summergrowth, Ki11_Summergrowth, HP301_Summergrowth,  Cdata333_2023SummerShadegrowth, 
+                        Cdata333_2023SummerDroughtgrowth, Cdata333_2023SummerControlgrowth,Cdata322_2021Summergrowth, Cdata277_2021Fallgrowth, Cdata247_2021Fallgrowth, Cdata228_2021Summergrowth, Cdata103_2021Summergrowth, Cdata69_2021Summergrowth, 
+                        Cdata52_2021Summergrowth, B97_2021Summergrowth,B73_2023SummerShadegrowth, B73_2023SummerDroughtgrowth, B73_2023SummerControlgrowth, B73_2023Springgrowth, B73_2022growth, B73_2022Fallgrowth,
+                        B73_2021growth, Ms71_180growth, Ms71_191growth)
+
+# renames the column names
+## renames intercept
+growthmerged<-subset(growthtidymerged, term=="yint.(Intercept)")[, c("Plant_ID","Year", "Genotype_ID", "Season", "Treatment", "estimate")]
+names(growthmerged)[names(growthmerged)=='estimate']<-"Intercept"
+
+## renames to growthrate
+growthmerged<-merge(growthmerged, subset(growthtidymerged, term=="m.Day_no")[, c("Plant_ID","Year", "Genotype_ID", "Season", "Treatment", "estimate")], by=c("Plant_ID","Year", "Genotype_ID", "Season", "Treatment"), all.x=TRUE)
+names(growthmerged)[names(growthmerged)=='estimate']<-"GrowthRate"
+
+## renames to duration
+growthmerged<-merge(growthmerged, subset(growthtidymerged, term=="jp")[, c("Plant_ID","Year", "Genotype_ID", "Season", "Treatment", "estimate")], by=c("Plant_ID","Year", "Genotype_ID", "Season", "Treatment"), all.x=TRUE)
+names(growthmerged)[names(growthmerged)=='estimate']<-"Duration"
+
+# writes all growth data to one csv file
+write_csv(growthmerged,"allyears_growthratedata.csv")
+
+# makes all seasons capital 
+growthmerged <- growthmerged %>% 
+  mutate(Season = str_replace(Season, "SPRING", "Spring"))%>%
+  mutate(Season = str_replace(Season, "SUMMER", "Summer"))
+
+# checks the values and uniqueness to make sure all uppercase/ similar data
+str(growthmerged)
+unique(growthmerged$Season)
+unique(growthmerged$Year)
+```
+
+# Box Plot
+# Note: The legend stays fixed in size, in the preview in R markdown file you cant make the facet wrapped
+# graphs bigger so the legend overlaps them. Use R script so the graph goes into the preview on the bottom right
+# in R studio. In that preview you can make the facet wrapped graphs bigger so the legend doesn't overlap them
+```{r}
+growthmerged$Season <- str_to_title(growthmerged$Season)                                     # for title label purpose
+growthmerged$label <- paste(growthmerged$Year, growthmerged$Season, growthmerged$Treatment) # for title label purpose
+
+growthrate_boxplot <- ggplot(growthmerged,                                                   
+                             aes(x = factor(0),                     # no x axis
+                                 y = GrowthRate,                    # y axis is growth rate of leaf 4
+                                 colour=Genotype_ID))+              # color of each boxplot is by genotype
+  geom_boxplot()+                                                   # create box plot
+  theme_bw()+ 
+  ylab("Growth Rate mm/day")+
+  xlab("Treatment") +
+  facet_wrap(~label, nrow=2) +                                      # group graphs by year, season, and treatment
+  labs(color = "Genotype") +
+  theme(axis.title.x = element_blank(),                             # remove x axis title and make remove grid lines
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = c(0.87, 0.247)) +                         # set legend in bottom corner right
+  guides(color = guide_legend(ncol = 3))
+
+plot(growthrate_boxplot)
+```
+
+# Saving the graphs
+# Note: change the width and height to make the graphs wider or longer
+# Note: If you don't add width or height arguments then whats in the preview
+# when you plot the graph is what's going to be saved as the picture
+```{r}
+ggsave("high resolution surface area leaf 4 density plot.png", plot = sa_l4_density, dpi = 1200) # save density plot
+
+ggsave("high resolution regression surface area leaf 4 x all root types.png", # save regression graph
+       plot = sa_l4_x_allroottypes_regression, width = 8, 
+       height = 6, 
+       dpi = 1200)
+
+ggsave("high resolution growth rate box plot.png", # save box plot
+       plot = growthrate_boxplot,
+       width = 8,
+       height = 6,
+       dpi = 1200)
+```
+
+# Neural Network
+```{r}
+### Import libraries
+library(tidyverse)
+library(neuralnet)
+library(nnet)
+library(GGally)
+
+data<-read.csv("all_merged_sum_V2.csv")
+str(data)
+
+#as.factor() <== indicates how categorizes data
+## when uses as.factor(); variable no longer visible in dataframe
+data$Year<-as.factor(data$Year)
+data$Genotype_ID<-as.factor(data$Genotype_ID)
+data$Treatment_ID<-as.factor(data$Treatment_ID)
+data$Season<-as.factor(data$Season)
+data$Plant_ID<-as.factor(data$Plant_ID)
+
+data_num<-data[,-c(1:10)] # take out non-numeric 
+str(data_num)
+
+
+library(missMDA)
+data_norm_c<-imputePCA(data_num, ncp =5, threshold = 0.0001) #impute data; to make comparable
+
+data_norm<-data.frame(data_norm_c$completeObs) # make dataframe from imputed data
+
+str(data_norm)
+
+#get variables for classification
+data_norm$Year<-as.factor(data$Year)
+data_norm$Genotype_ID<-as.factor(data$Genotype_ID)
+data_norm$Treatment_ID<-as.factor(data$Treatment_ID)
+data_norm$Season<-as.factor(data$Season)
+data_norm$Plant_ID<-as.factor(data$Plant_ID)
+
+#create new filtered dataset
+data_overall<-filter(data_norm, Year == 2023 & Season == "SUMMER")
+#str(data_overall)
+
+data_overall$combo<-paste(data_overall$Treatment_ID,data_overall$Genotype_ID)
+data_overall$combo<-as.factor(data_overall$combo)
+str(data_overall)
+
+data_cleaned<-data_overall[,-c(88:92)] #subset to the numeric data; all data is characters (eg, genotype, season) that are getting rid of
+str(data_cleaned)
+
+#get rid of CML322
+data_filtered<-filter(data_cleaned, combo != "CONTROL CML322")
+
+#Split to training/test
+random_rows = sort(sample(nrow(data_filtered), nrow(data_filtered)*.9))
+training_data <- data_filtered[random_rows,]
+test_data  <- data_filtered[-random_rows,]
+
+#Neural Network
+
+# Build the model
+model<-nnet(combo ~ ., data=training_data,size = 5,decay = 0.0001,maxit = 500)
+#The parameters used in the nnet() function can be tuned to improve performance.
+
+#plot the network
+library(devtools)
+source_url('https://gist.githubusercontent.com/fawda123/7471137/raw/466c1474d0a505ff044412703516c34f1a4684a5/nnet_plot_update.r')
+
+## plots/displays the model
+plot.nnet(model)
+
+#summary stats
+summary(model)
+summary(model$residuals)
+
+#prediction
+test_data$pred_nnet<-predict(model,test_data,type="class")
+
+#confusions matix
+mtab<-table(test_data$pred_nnet,test_data$combo)
+mtab
+confusionMatrix(mtab)
+
+###another way to generate the neural network
+
+fitControl <- trainControl(method = "cv", number = 5)
+
+m.NeuralNet <- train(combo ~ ., 
+                      data = train, 
+                      method = "nnet", 
+                      trControl = fitControl,
+                      na.action = na.omit,
+                     trace = FALSE)
+
+nn.pred <- predict(m.NeuralNet,test)
+confusionMatrix(nn.pred, test$combo) 
+
+# plots model and works
+plot(model)
+```
+
+# Machine Learning overall graph
+```{r}
+### Import libraries
+library(randomForest)
+library(ggplot2)
+
+set.seed(4543)
+
+# randomly chooses 70% as training and 30% as test data
+ind <- sample(2, nrow(data_cleaned), replace = TRUE, prob = c(0.7, 0.3))
+
+train <- data_cleaned[ind==1,]
+test <- data_cleaned[ind==2,]
+
+str(test)
+
+# performs random forest algorithm on the data
+rf <- randomForest(combo ~ ., data=train, ntree=1000,proximity=TRUE)
+print(rf)
+
+# predicts and creates a confusion matrix on the data
+p1 <- predict(rf, test)
+cm <- confusionMatrix(p1, test$combo)
+
+#write.csv(df, "all_merged_sum.csv")
+
+# Dislpays the confusion matrix of random forest algorithm
+plt$Prediction <- factor(plt$Prediction, levels=rev(levels(plt$Prediction))) # make Prediction in plt dataframe a factor 
+cm_all <- ggplot(plt, aes(Prediction,Reference, fill= Freq)) + # use plt for dataframe, Prediction for y value reference for x, the data in each tile is the values of what the ML predicted
+  geom_tile() + geom_text(aes(label=Freq), size = 7) + # geom tile visualizes data as a grid of tiles, with the values of what the ML predicted as the text in each tile
+  scale_fill_gradient(low="white", high="#009194") + # lower values = white and higher values = more blue
+  labs(x = "Reference",y = "Prediction") +
+  theme(axis.text.x = element_text(angle = 75, vjust = 1, hjust=1)
+  )
+
+cm_all
+  
+ggsave("Confusion_All_2023_high_res.png", plot = cm_all, dpi = 1200)
+```
+
+# Machine Learning by year
+```{r}
+library(randomForest)
+library(ggplot2)
+
+set.seed(4543)
+
+data_norm_year <- data_norm
+
+#as.factor() <== indicates how categorizes data
+## when uses as.factor(); variable no longer visible in dataframe
+data_norm_year$Year<-as.factor(data$Year)
+data_norm_year$Genotype_ID<-as.factor(data$Genotype_ID)
+data_norm_year$Treatment_ID<-as.factor(data$Treatment_ID)
+data_norm_year$Season<-as.factor(data$Season)
+data_norm_year$Plant_ID<-as.factor(data$Plant_ID)
+
+str(data_norm_year)
+
+#view(data_norm_year)
+
+# subsets the data by 2023 as the reference
+## geotype since B73 is the common inbred for all years
+reference <- subset(data_norm_year,Year == 2023 & Season =="SUMMER" & Genotype_ID == "B73")
+# removes all character columns that are not needed
+reference_nums <- reference[,-c(91,92,89,88)] 
+
+
+# gets the data from previous years to predict condition
+## change the season, and year to generate different subsets to predict
+prediction <- subset(data_norm_year, Year == 2022 & Season =="FALL" & Genotype_ID == "B73")
+prediction_num<-prediction[,-c(91,92,89,88)] 
+
+str(prediction)
+
+str(prediction)
+
+# uses 2023 to train; and other years to test whether similar to control
+train <- reference_nums
+test <- prediction_num
+
+str(data_overall)
+
+# runs the confusion matrix algorithm on the training
+rf <- randomForest(Treatment_ID ~ ., data=train, ntree=1000,proximity=TRUE)
+print(rf)
+
+# runs the test to predict the data
+p1 <- predict(rf, test)
+
+cm1 <- confusionMatrix(p1, test$Treatment_ID)
+
+# plots the dataframe/ confusion matrix into a graph that is colored for
+# prediction year generated data for
+
+plt <- as.data.frame(cm1$table) # create a dataframe out of confusion matrix
+plt$Prediction <- factor(plt$Prediction, levels=rev(levels(plt$Prediction))) # make Prediction in plt dataframe a factor 
+cm_predyear <- ggplot(subset(plt,plt$Reference == "CONTROL"), aes(Prediction,Reference, fill= Freq)) + # use plt for dataframe, Prediction for y value reference for x, the data in each tile is the values of what the ML predicted
+  geom_tile() + geom_text(aes(label=Freq), size = 10) + # geom tile visualizes data as a grid of tiles, with the values of what the ML predicted as the text in each tile
+  scale_fill_gradient(low="white", high="#009194") + # lower values = white and higher values = more blue
+  labs(x = "Reference",y = "Prediction") + # labels for x and y value
+  scale_y_discrete(labels=c("Control", "", "")) +
+  scale_x_discrete(labels=c("Shade", "Drought", "Control"))
+
+ggsave("Confusion_Fall_2022.png", plot = cm_predyear, dpi = 1200)
+```
+
+
